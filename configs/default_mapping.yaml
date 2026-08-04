@@ -1,0 +1,59 @@
+# Default event-taxonomy mapping for the shipped example dataset
+# (messy_complete_events_simple.csv).
+#
+# The example data already uses canonical event names, so this is effectively
+# an identity mapping. It exists as a reference / starting point and proves
+# out the full configuration flow for new data sources.
+#
+# For a NEW data source, the recommended flow is:
+#   1. Open the ⚙ Settings tab in the dashboard
+#   2. Upload a CSV (or configure a SQL connection)
+#   3. Click "✦ Suggest mapping with AI" — Claude reads a sample of the data
+#      and writes a file like this one for your source
+#   4. Review / edit the proposed mapping, then apply
+
+source_name: default
+description: Identity mapping for the shipped example CSV
+
+events_columns:
+  user_id: user_id
+  event_name: event_name
+  timestamp: timestamp
+
+event_map:
+  signup:           [signup]
+  onboarding_step1: [onboarding_step1]
+  onboarding_step2: [onboarding_step2]
+
+  view_pricing:     [view_pricing]
+  start_checkout:   [start_checkout]
+  payment_success:  [payment_success]
+  payment_failed:   [payment_failed]
+  plan_upgrade:     [plan_upgrade]
+
+  view_dashboard:   [view_dashboard]
+  view_feature_A:   [view_feature_A]
+  view_feature_B:   [view_feature_B]
+  view_feature_C:   [view_feature_C]
+  view_feature_D:   [view_feature_D]
+  invite_team:      [invite_team]
+
+  rage_click:       [rage_click]
+  error:            [error]
+  contact_support:  [contact_support]
+
+  page_view:        [page_view]
+  click:            [click]
+  session_start:    [session_start]
+  session_end:      [session_end]
+
+users_columns:
+  user_id: user_id
+
+unmapped_events: []
+
+notes: |
+  Identity mapping. Every canonical event pulls from a raw event with the
+  same name. If you replace the CSV with your own data and events are named
+  differently, use the Settings → AI-assisted mapping flow to generate a
+  new mapping file rather than editing this one.

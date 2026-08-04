@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.claude/
+*.code-workspace
+messy_complete_events.csv

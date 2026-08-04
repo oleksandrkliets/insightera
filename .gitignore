@@ -1,0 +1,12 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+
+# Raw source data — too large for a normal git push (162MB, exceeds GitHub's
+# 100MB per-file limit) and unused by the app, which reads
+# messy_complete_events_simple.csv instead. File stays on disk untouched.
+messy_complete_events.csv

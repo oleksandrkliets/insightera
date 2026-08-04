@@ -1,0 +1,12 @@
+anthropic>=0.86.0
+dash>=4.0.0
+dash-auth>=2.3.0
+dash-bootstrap-components>=2.0.4
+gunicorn>=23.0.0
+numpy>=2.0.0
+pandas>=2.2.0
+plotly>=6.0.0
+psycopg2-binary>=2.9.0
+scikit-learn>=1.8.0
+sqlalchemy>=2.0.0
+pyyaml>=6.0
