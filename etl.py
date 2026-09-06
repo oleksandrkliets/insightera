@@ -313,7 +313,8 @@ def load_stripe_from_db(db_url: str) -> dict:
 def load_and_clean(csv_path: str) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
     df.columns = ["user_id", "timestamp", "event_name"]
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df["timestamp"] = to_utc_naive(df["timestamp"])
+    df = df[df["timestamp"].notna()]
     df["event_raw"] = df["event_name"]
     # Vectorized normalization: strip → remove _dup_ suffix → dict map
     _names = df["event_name"].str.strip()
@@ -333,17 +334,76 @@ def load_and_clean(csv_path: str) -> pd.DataFrame:
 #  USER PROFILES  (behaviour + financial)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_user_profiles(df: pd.DataFrame, financials: pd.DataFrame = None) -> pd.DataFrame:
+def to_utc_naive(series: pd.Series) -> pd.Series:
+    """Normalise a timestamp series to a single UTC wall clock.
+
+    Source data routinely mixes timezones (or mixes aware and naive values),
+    which silently corrupts any "time between events" calculation. This parses
+    everything to UTC, then drops tzinfo so that all downstream comparisons —
+    including against date-picker values, which are naive — stay consistent.
+    """
+    return pd.to_datetime(series, errors="coerce", utc=True).dt.tz_localize(None)
+
+
+def reference_now(df: pd.DataFrame, reference_time=None) -> pd.Timestamp:
+    """The "now" used for recency and churn calculations.
+
+    Uses real wall-clock time for live data. Falls back to the dataset's last
+    timestamp when the data is stale (>7 days behind), so that historical or
+    demo datasets don't mark every single user as churned.
+    """
+    if reference_time is not None:
+        return pd.Timestamp(reference_time).tz_localize(None) \
+            if pd.Timestamp(reference_time).tzinfo else pd.Timestamp(reference_time)
+    dataset_end = pd.Timestamp(df["timestamp"].max())
+    if dataset_end.tzinfo is not None:
+        dataset_end = dataset_end.tz_localize(None)
+    now = pd.Timestamp.utcnow().tz_localize(None)
+    return now if (now - dataset_end).days <= 7 else dataset_end
+
+
+def infer_churn_threshold(df: pd.DataFrame,
+                          floor_days: float = 14.0,
+                          cap_days: float = 90.0) -> float:
+    """Derive a churn threshold from the dataset's own activity rhythm.
+
+    A fixed 14-day rule suits a product used daily, but wrongly marks almost
+    everyone churned in a product used weekly or monthly. Since every customer's
+    product has a different cadence, the threshold is inferred: take the 75th
+    percentile of users' inter-event gaps and allow roughly three missed usage
+    cycles, clamped to a defensible range.
+    """
+    s = df.sort_values(["user_id", "timestamp"])
+    gaps = s.groupby("user_id")["timestamp"].diff().dt.total_seconds() / 86400.0
+    typical = gaps[gaps > 0].quantile(0.75)
+    if pd.isna(typical):
+        return floor_days
+    return float(min(max(typical * 3.0, floor_days), cap_days))
+
+
+def build_user_profiles(df: pd.DataFrame, financials: pd.DataFrame = None,
+                        reference_time=None,
+                        churn_threshold_days: float = None) -> pd.DataFrame:
     user_groups = df.groupby("user_id")
 
     p = pd.DataFrame()
     p["total_events"] = user_groups.size()
     p["first_event"] = user_groups["timestamp"].min()
     p["last_event"] = user_groups["timestamp"].max()
+
+    # Distinct calendar dates on which the user did something. NOT the span
+    # between first and last event — a user seen on day 1 and day 30 has two
+    # active days, not thirty.
     p["active_days"] = (
+        df.assign(_date=df["timestamp"].dt.normalize())
+        .groupby("user_id")["_date"].nunique()
+    )
+    # Span from first to last event. Kept separately because cohort and
+    # lifecycle analysis genuinely needs elapsed time.
+    p["tenure_days"] = (
         (p["last_event"] - p["first_event"]).dt.total_seconds() / 86400
     ).round(1)
-    p["events_per_day"] = (p["total_events"] / p["active_days"].clip(lower=0.5)).round(2)
+    p["events_per_day"] = (p["total_events"] / p["active_days"].clip(lower=1)).round(2)
 
     # Sessions
     p["session_count"] = df[df["event_name"] == "session_start"].groupby("user_id").size()
@@ -377,21 +437,33 @@ def build_user_profiles(df: pd.DataFrame, financials: pd.DataFrame = None) -> pd
     p["revenue_events"] = p["n_payment_success"]
     p["converted"] = (p["revenue_events"] > 0).astype(int)
 
-    # Churn risk (composite)
-    dataset_end = df["timestamp"].max()
-    p["days_since_last"] = (
-        (dataset_end - p["last_event"]).dt.total_seconds() / 86400
-    ).round(1)
-    low_events = p["total_events"] < p["total_events"].median()
-    low_active = p["active_days"] < p["active_days"].median()
     p["feature_breadth"] = (
         df[df["event_name"].str.startswith("view_feature_")]
         .groupby("user_id")["event_name"].nunique()
         .reindex(p.index).fillna(0).astype(int)
     )
-    low_features = p["feature_breadth"] < 2
-    churn_score = low_events.astype(int) + low_active.astype(int) + low_features.astype(int)
-    p["churned"] = (churn_score >= 2).astype(int)
+
+    # ── Churn: recency-based, not a composite heuristic ─────────────────
+    # Previously churn was inferred from "low events + short span + few
+    # features", which labelled brand-new active users as churned and
+    # long-tenured dormant users as retained. Churn is a recency question.
+    ref_now = reference_now(df, reference_time)
+    threshold = (churn_threshold_days if churn_threshold_days is not None
+                 else infer_churn_threshold(df))
+    p["days_since_last"] = (
+        (ref_now - p["last_event"]).dt.total_seconds() / 86400
+    ).round(1)
+    p["churned"] = (p["days_since_last"] > threshold).astype(int)
+    # Expose what was actually used, so the UI can state the definition rather
+    # than presenting an unexplained churn number.
+    p.attrs["churn_threshold_days"] = round(threshold, 1)
+    p.attrs["reference_now"] = str(ref_now)
+
+    # Engagement depth is still useful — just not as a churn proxy.
+    p["low_engagement"] = (
+        (p["total_events"] < p["total_events"].median())
+        & (p["feature_breadth"] < 2)
+    ).astype(int)
 
     p["completed_onboarding"] = (
         (p["n_onboarding_step1"] > 0) & (p["n_onboarding_step2"] > 0)
@@ -407,10 +479,15 @@ def build_user_profiles(df: pd.DataFrame, financials: pd.DataFrame = None) -> pd
         for col in financials.columns:
             p[col] = financials[col].reindex(p.index).fillna(0)
         p["total_revenue"] = p.get("total_revenue", 0)
-        p["ltv"] = p["total_revenue"]  # lifetime value = total revenue
     else:
         p["total_revenue"] = 0
-        p["ltv"] = 0
+
+    # Revenue actually collected to date. This is NOT lifetime value — LTV is a
+    # forward projection (expected revenue over the remaining relationship).
+    # `ltv` is retained as an alias so existing chart code keeps working, but
+    # `revenue_to_date` is the honest name and should be preferred in new code.
+    p["revenue_to_date"] = p["total_revenue"]
+    p["ltv"] = p["revenue_to_date"]
 
     return p
 
@@ -484,7 +561,7 @@ def _finalise_events(raw_df: pd.DataFrame) -> pd.DataFrame:
     because a taxonomy mapping has been applied upstream).
     """
     df = raw_df.copy()
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df["timestamp"] = to_utc_naive(df["timestamp"])
     df = df[df["timestamp"].notna()]
     if "event_raw" not in df.columns:
         df["event_raw"] = df["event_name"]
