@@ -234,6 +234,26 @@ def check_semantics(events: pd.DataFrame,
               f"Timestamps are timezone-aware ({ts.dt.tz}). The pipeline "
               f"expects UTC-normalised naive timestamps.")
 
+    # Load-bearing canonical events. This matters more than the raw unmapped
+    # percentage: a customer with many bespoke events we don't need is fine,
+    # but losing the events the charts are built on is not. Each group needs at
+    # least one member present for the dashboard to mean anything.
+    if "event_name" in events.columns:
+        present = set(events["event_name"].unique())
+        required_groups = {
+            "user arrival": {"signup", "session_start"},
+            "engagement": {"view_dashboard", "view_feature_A", "view_feature_B",
+                           "view_feature_C", "view_feature_D", "page_view",
+                           "click", "invite_team"},
+        }
+        missing = [label for label, opts in required_groups.items()
+                   if not (opts & present)]
+        if missing:
+            r.add(BLOCK, "semantic", "missing_critical_events",
+                  f"No events mapped for: {', '.join(missing)}. The dashboard "
+                  f"cannot produce meaningful analysis without these.",
+                  missing_groups=missing)
+
     # Canonical coverage
     if canonical_events and "event_name" in events.columns:
         counts = events["event_name"].value_counts()

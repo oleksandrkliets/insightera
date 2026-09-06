@@ -10,3 +10,6 @@ __pycache__/
 # 100MB per-file limit) and unused by the app, which reads
 # messy_complete_events_simple.csv instead. File stays on disk untouched.
 messy_complete_events.csv
+
+# Mapping template cache — regenerated at runtime
+configs/mapping_templates.json
