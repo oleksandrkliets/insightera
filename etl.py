@@ -620,9 +620,47 @@ def run_etl_from_connector(connector, mapping=None, users_override=None,
     if raw_users is not None:
         _ = apply_user_mapping(raw_users, _mapping)
 
+    profiles = build_user_profiles(df, financials)
+
+    # ── Validate before handing data to the dashboard ────────────────────
+    # Warn rather than reject: customer data is always messy, and a dashboard
+    # with visible caveats beats no dashboard. Only genuinely unusable data
+    # blocks, and the caller decides what to do with that.
+    try:
+        from validation import validate_pipeline, reconcile_row_count, INFO
+        from taxonomy import CANONICAL_EVENTS
+        # Each check runs at the stage where it is meaningful:
+        #  • semantic/structural — on the FINAL frame, after alias
+        #    normalisation, or raw typos read as non-canonical events
+        #  • row-count reconciliation — on the mapping step alone, since
+        #    rage-click collapsing intentionally removes rows later
+        report = validate_pipeline(df, profiles,
+                                   canonical_events=CANONICAL_EVENTS)
+        report = report.merge(
+            reconcile_row_count(len(normalised), len(raw_events)))
+        collapsed = len(normalised) - len(df)
+        if collapsed > 0:
+            report.add(INFO, "reconciliation", "burst_collapse",
+                       f"{collapsed:,} click events collapsed into "
+                       f"{int(df['event_name'].eq('rage_click').sum()):,} "
+                       f"rage_click events (intentional).",
+                       collapsed=collapsed)
+    except Exception as e:  # validation must never break ingestion
+        report = None
+        print(f"  ⚠ validation skipped: {e}")
+
+    if report is not None and report.findings:
+        counts = report.counts
+        print(f"  Validation: {counts['BLOCK']} blocking, "
+              f"{counts['WARN']} warnings, {counts['INFO']} notes")
+        for f in report.sorted_findings():
+            if f.severity != "INFO":
+                print(f"    {f}")
+
     return {
         "events": df,
-        "user_profiles": build_user_profiles(df, financials),
+        "user_profiles": profiles,
+        "validation": report,
         "transitions": build_transition_matrix(df),
         "step_sequences": build_step_sequences(df),
         "self_loops": build_self_loops(df),
