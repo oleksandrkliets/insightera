@@ -16,8 +16,66 @@ Blocked on:       nothing
 **Session log** (append one line per session, newest at top):
 
 ```
-2026-08-05  W1.S1  Submitted ad-platform approvals — DONE / IN PROGRESS / NOT STARTED
+2026-08-05  W1.S1  Submitted early-stage API applications — DONE / IN PROGRESS / NOT STARTED
 ```
+
+---
+
+## 🔑 API ACCESS TIMELINE
+
+Not every platform accepts an application before a working integration exists.
+Submitting too early gets you rejected; submitting too late blocks the build.
+Full justification copy lives in [`docs/API_ACCESS_APPLICATION.md`](docs/API_ACCESS_APPLICATION.md).
+
+### Submit NOW — Week 1 (nothing to demonstrate yet)
+
+| Platform | What to apply for | Why it can go now | Status |
+|---|---|---|---|
+| **Google Ads** | Developer token, **Basic** access | Token issued on application; Standard upgrade comes later | ☐ |
+| **TikTok** | Business Verification | Company-level, independent of any app | ☐ |
+| **QuickBooks** | Sandbox keys | Self-serve, immediate | ☐ |
+| **HubSpot** | Developer account + app registration | No review needed for unlisted apps | ☐ |
+| **GA4** | GCP project + service account | No review for the service-account approach | ☐ |
+
+### No application needed at all
+
+| Platform | Access method |
+|---|---|
+| **Stripe** | Customer pastes a restricted API key |
+| **PostHog** | Customer pastes an API key |
+| **Mailchimp / Klaviyo** | Customer pastes an API key |
+| **Segment** | Customer adds a webhook destination |
+| **Databases / warehouses** | Customer supplies a read-only connection |
+
+### Submit AFTER Week 10 — needs hosted app + privacy policy live
+
+| Platform | What to apply for | Blocker | Status |
+|---|---|---|---|
+| **LinkedIn** | Marketing Developer Platform | Detailed use-case review; may request a demo | ☐ |
+
+### Submit AFTER the connector is built and demonstrable
+
+| Platform | What to apply for | Blocker | Target | Status |
+|---|---|---|---|---|
+| **Meta** | App Review, `ads_read` Advanced Access + Business Verification | Requires working flow, reviewer test account, screencast, live privacy policy | W14 | ☐ |
+| **QuickBooks** | Production keys | Requires working OAuth flow | after Stripe/QBO built | ☐ |
+| **Google Ads** | **Standard** access upgrade | Requires demonstrating the tool in use | W13 | ☐ |
+
+### Hard prerequisites for the later applications
+
+- [ ] Hosted app at a public URL — *W10*
+- [ ] Privacy policy published at a public URL — *W10.S5*
+- [ ] Terms of service published — *W10.S5*
+- [ ] Token encryption at rest — *W4.S1*
+- [ ] Per-customer data isolation — *W9*
+- [ ] Data deletion path implemented + documented — *W9.S5*
+- [ ] Reviewer test account with credentials — *W14*
+- [ ] Screencast: connect → sync → view — *W14*
+
+> ⚠️ **TikTok note:** business verification is worth starting now (company-level,
+> takes calendar time), but the *connector* is low priority — TikTok ad spend in
+> B2B SaaS is near zero. It sits in the cut list, not the 16 weeks.
+> If your first customers turn out to be ecommerce, this ordering flips.
 
 ---
 
@@ -46,13 +104,17 @@ Blocked on:       nothing
 
 ### Week 1 — Correctness + start the approval clocks
 
-- [ ] **W1.S1 — Submit all platform approvals** ⏰ *do this first, clocks run for months*
-  - Google Ads: Standard access on developer token
-  - Meta: App Review for `ads_read` Advanced Access + Business Verification
-  - LinkedIn: Marketing Developer Platform application
-  - TikTok: app registration + Business Verification
-  - QuickBooks: Production keys
-  - **Done when:** all 5 submitted, confirmation emails saved
+- [ ] **W1.S1 — Submit the early-stage API applications** ⏰ *~45 min, clocks run for weeks*
+  - Google Ads: developer token, **Basic** access
+  - TikTok: Business Verification (company docs — see below)
+  - QuickBooks: sandbox keys
+  - HubSpot: developer account + app registration
+  - GA4: GCP project + service account
+  - ⚠️ **Do NOT apply for Meta, LinkedIn, or QuickBooks production yet** — they
+    require a hosted app and a working flow. See the API Access Timeline above.
+  - Have ready for TikTok verification: certificate of incorporation, business
+    address matching it, a live company website
+  - **Done when:** all 5 submitted, confirmation emails saved to a folder
 
 - [ ] **W1.S2 — Fix `active_days`**
   - Currently: `(last_event - first_event)` = total span. A user active on day 1 and day 30 shows 30 active days.
@@ -151,14 +213,19 @@ Blocked on:       nothing
 
 ### Week 9 — Multi-tenancy
 - [ ] S1-S2 — Workspace model + per-workspace data isolation
-- [ ] S3-S4 — Remove `_with_filtered_globals` global-swapping (unsafe with >1 user)
-- [ ] S5 — Test two workspaces side by side, confirm no data bleed
+- [ ] S3-S4 — Remove `_with_filtered_globals` global-swapping (`dashboard_flows.py:7680`, unsafe with >1 user)
+- [ ] S5 — **Data deletion path** — disconnect a source → tokens deleted, data purged
+  - 🔑 *Required by Meta and QuickBooks applications*
+- **Done when:** two workspaces run side by side with no data bleed
 
-### Week 10 — Auth + deploy
+### Week 10 — Auth + deploy + unblock LinkedIn
 - [ ] S1-S2 — Clerk auth (don't build your own)
-- [ ] S3-S4 — Deploy to Render (Dockerfile exists)
-- [ ] S5 — Custom domain + HTTPS
-- **Done when:** a real URL a stranger can log into
+- [ ] S3-S4 — Deploy to Render (Dockerfile exists) + custom domain + HTTPS
+- [ ] S5 — **Publish privacy policy + terms of service** 🔑
+  - Substance already drafted in `docs/API_ACCESS_APPLICATION.md` §5
+  - Must name: data collected, sub-processors, retention, deletion path
+- [ ] **🔑 SUBMIT: LinkedIn Marketing Developer Platform** — now unblocked
+- **Done when:** a real URL a stranger can log into, with policy pages live
 
 ### Week 11 — Onboarding flow
 - [ ] S1-S2 — Source picker screen
@@ -180,10 +247,19 @@ Blocked on:       nothing
 ## MONTH 4 — Ads + first customer
 
 ### Week 13 — Google Ads
-- [ ] MCC account linking flow + GAQL queries + PMax handling
+- [ ] S1-S2 — MCC account linking flow (customer approves link in their own Ads UI)
+- [ ] S3-S4 — Campaign-level GAQL query (works across all campaign types)
+  - Remember: `cost_micros` ÷ 1,000,000. Getting this wrong reports spend 1,000,000× high.
+  - Store `advertising_channel_type`; warn where PMax limits available breakdowns
+- [ ] S5 — **🔑 SUBMIT: Google Ads Standard access upgrade** — you can now demonstrate the tool
 
-### Week 14 — Meta Ads
-- [ ] OAuth + Marketing API + attribution-window handling
+### Week 14 — Meta Ads + submit the blocked applications
+- [ ] S1-S3 — OAuth + Marketing API insights + attribution-window handling
+  - Label Meta-reported conversions as Meta-attributed; use Stripe for revenue truth
+- [ ] S4 — Record the reviewer screencast: connect → sync → view → disconnect
+- [ ] S5 — **🔑 SUBMIT: Meta App Review** (`ads_read` Advanced Access + Business Verification)
+- [ ] S5 — **🔑 SUBMIT: QuickBooks production keys** (OAuth flow now demonstrable)
+- **Done when:** all remaining applications submitted, test account credentials documented
 
 ### Week 15 — GA4 + Segment
 - [ ] S1-S3 — GA4 via BigQuery export (flatten nested `event_params`)
@@ -201,13 +277,18 @@ Blocked on:       nothing
 
 ## If I fall behind — cut in this order
 
-1. LinkedIn + TikTok Ads (smallest share)
-2. Segment (GA4 + PostHog cover most of it)
-3. Mailchimp / Klaviyo (not core to the product+finance thesis)
-4. GA4 (most painful build per unit of value)
+1. **TikTok Ads** — near-zero B2B SaaS spend (keep the business verification, skip the connector)
+2. **LinkedIn Ads** — longest approval, modest share
+3. **Segment** — GA4 + PostHog cover most of the same ground
+4. **Mailchimp / Klaviyo** — not core to the product+finance thesis
+5. **GA4** — most painful build per unit of value (nested `event_params` flattening)
 
 **Never cut:** validation · self-healing loop · onboarding · deployment.
 Those are what make it a product instead of a script.
+
+> If your first customers are **ecommerce rather than B2B SaaS**, this ordering
+> inverts — TikTok and Klaviyo jump up, LinkedIn drops further. One more reason
+> to run the customer conversations before Week 13.
 
 ---
 
@@ -221,12 +302,21 @@ Those are what make it a product instead of a script.
 | `connectors.py` | `Connector` ABC, `CSVConnector`, `SQLConnector`, `DataFrameConnector`, `SourceProbe` |
 | `ai_utils.py` | Claude chat, tab insights, `infer_data_mapping`, retry/backoff |
 | `configs/` | Mapping YAML files |
+| `docs/API_ACCESS_APPLICATION.md` | Platform application copy — endpoints, data handling, compliance |
 
-**Known issues to fix (tracked above):**
-- 🔒 DB credentials leak into client-side `dcc.Store` → W4.S3
-- `churned` / `active_days` / `ltv` are misleading → W1
-- No timezone handling → W1.S5
-- No multi-tenancy (global swapping) → W9
+**Known issues — all verified against the code 2026-08-05:**
+
+| Issue | Location | Fixed in |
+|---|---|---|
+| 🔒 DB credentials (incl. password) written to client-side store | `dashboard_flows.py:8985` → `dcc.Store` at `:7492` | W4.S3 |
+| `active_days` = total span, not distinct active dates | `etl.py:343` | W1.S2 |
+| `churned` = 3-signal heuristic, flags new users as churned | `etl.py:393-394` | W1.S3 |
+| `ltv` is revenue-to-date, not a projection — name misleads | `etl.py:410` | W1.S4 |
+| "now" = last event in data, not actual now | `etl.py:381` | W1.S4 |
+| No timezone handling anywhere (0 occurrences of `tz=`) | `etl.py` | W1.S5 |
+| Global-swapping blocks multi-tenancy | `dashboard_flows.py:7680` | W9 |
+
+*Line numbers drift as you edit — grep the symbol if a reference goes stale.*
 
 ---
 
