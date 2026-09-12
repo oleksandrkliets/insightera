@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import date
 from typing import Optional
 
 import pandas as pd
@@ -236,6 +237,150 @@ class SQLConnector(Connector):
             users_sample_rows=users_head,
             total_events=int(cnt) if cnt is not None else None,
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DOMAIN BASE CLASSES
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Finance, advertising and email data is not event-shaped. It is
+# metric-shaped: "this channel spent $X and got Y clicks on date D". Forcing
+# that through the event interface means every connector fights the
+# abstraction, so each domain gets its own contract.
+#
+# Subclasses implement only the raw pull and the platform's own quirks. The
+# output shape is fixed here, which is what makes the fourth ads connector
+# cheap after the first one.
+
+# Columns every AdsConnector must return
+AD_METRIC_COLUMNS = [
+    "date", "channel", "campaign_id", "campaign_name",
+    "spend", "impressions", "clicks", "conversions",
+    "conversion_value", "currency",
+]
+
+EMAIL_METRIC_COLUMNS = [
+    "date", "campaign_id", "campaign_name", "sent", "delivered",
+    "opened", "clicked", "unsubscribed", "bounced",
+]
+
+
+class AdsConnector(Connector):
+    """Base for Google / Meta / LinkedIn / TikTok Ads.
+
+    Note on conversions: platform-reported conversion counts use that
+    platform's own attribution model and will not agree with first-party
+    revenue. Return them, but they are labelled as platform-attributed
+    downstream and never used as the revenue source of truth.
+    """
+    source_name = "ads"
+    channel_name = "unknown"
+
+    @abstractmethod
+    def read_performance(self, since: "date", until: "date") -> pd.DataFrame:
+        """Daily campaign-level metrics conforming to AD_METRIC_COLUMNS."""
+        ...
+
+    def read_events(self) -> pd.DataFrame:
+        """Ads sources carry no user-level events."""
+        return pd.DataFrame(columns=["user_id", "timestamp", "event_name"])
+
+    def normalise(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Guarantee the canonical shape regardless of what the API returned."""
+        out = df.copy()
+        for col in AD_METRIC_COLUMNS:
+            if col not in out.columns:
+                out[col] = pd.NA
+        out["channel"] = out["channel"].fillna(self.channel_name)
+        if "date" in out:
+            out["date"] = pd.to_datetime(out["date"], errors="coerce").dt.date
+        for num in ("spend", "impressions", "clicks", "conversions",
+                    "conversion_value"):
+            out[num] = pd.to_numeric(out[num], errors="coerce").fillna(0)
+        return out[AD_METRIC_COLUMNS]
+
+    def probe(self, max_event_names: int = 60,
+              sample_rows: int = 5) -> SourceProbe:
+        from datetime import date as _date, timedelta as _td
+        sample = self.read_performance(_date.today() - _td(days=7),
+                                       _date.today())
+        return SourceProbe(
+            event_columns=list(sample.columns),
+            user_columns=[],
+            event_name_samples=[(self.channel_name, len(sample))],
+            events_sample_rows=sample.head(sample_rows),
+            users_sample_rows=None,
+            total_events=len(sample),
+        )
+
+
+class FinanceConnector(Connector):
+    """Base for Stripe / QuickBooks / Chargebee.
+
+    Currency matters here in a way it does not elsewhere: amounts arrive in the
+    account's own currency, and reporting them as USD without conversion is a
+    silent, material error.
+    """
+    source_name = "finance"
+
+    @abstractmethod
+    def read_invoices(self, since: Optional["date"] = None) -> pd.DataFrame: ...
+
+    def read_subscriptions(self, since: Optional["date"] = None
+                           ) -> pd.DataFrame:
+        return pd.DataFrame()
+
+    def read_charges(self, since: Optional["date"] = None) -> pd.DataFrame:
+        return pd.DataFrame()
+
+    def read_expenses(self, since: Optional["date"] = None) -> pd.DataFrame:
+        """Only accounting platforms have these; billing platforms do not."""
+        return pd.DataFrame()
+
+    def reported_total(self, metric: str,
+                       since: "date", until: "date") -> Optional[float]:
+        """The platform's own figure for a metric, used for reconciliation.
+
+        Returning None means "no independent figure available" and the
+        reconciliation check is skipped rather than failed.
+        """
+        return None
+
+    def read_events(self) -> pd.DataFrame:
+        return pd.DataFrame(columns=["user_id", "timestamp", "event_name"])
+
+    def read_financials(self) -> Optional[dict]:
+        return {
+            "invoices": self.read_invoices(),
+            "subscriptions": self.read_subscriptions(),
+            "charges": self.read_charges(),
+        }
+
+
+class EmailMarketingConnector(Connector):
+    """Base for Mailchimp / Klaviyo."""
+    source_name = "email"
+
+    @abstractmethod
+    def read_campaign_metrics(self, since: Optional["date"] = None
+                              ) -> pd.DataFrame:
+        """Campaign metrics conforming to EMAIL_METRIC_COLUMNS."""
+        ...
+
+    def read_events(self) -> pd.DataFrame:
+        return pd.DataFrame(columns=["user_id", "timestamp", "event_name"])
+
+    def normalise(self, df: pd.DataFrame) -> pd.DataFrame:
+        out = df.copy()
+        for col in EMAIL_METRIC_COLUMNS:
+            if col not in out.columns:
+                out[col] = pd.NA
+        if "date" in out:
+            out["date"] = pd.to_datetime(out["date"], errors="coerce").dt.date
+        for num in ("sent", "delivered", "opened", "clicked",
+                    "unsubscribed", "bounced"):
+            out[num] = pd.to_numeric(out[num], errors="coerce").fillna(0)
+        return out[EMAIL_METRIC_COLUMNS]
 
 
 # ══════════════════════════════════════════════════════════════════════════════

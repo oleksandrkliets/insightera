@@ -13,3 +13,7 @@ messy_complete_events.csv
 
 # Mapping template cache — regenerated at runtime
 configs/mapping_templates.json
+
+# Runtime state — never commit
+.state/
+.credentials/
