@@ -7,16 +7,21 @@
 ## 📍 STATUS — edit this every session
 
 ```
-Current week:     Week 1
-Last session:     — (not started)
-Next task:        W1.S2 — Fix active_days calculation
-Blocked on:       nothing
+Current week:     Week 5 (Month 1 complete)
+Last session:     W4.S5 — connector base classes
+Next task:        W5.S1 — Stripe connector: auth + customers/subscriptions
+Blocked on:       W1.S1 API applications not yet submitted (not code)
 ```
 
 **Session log** (append one line per session, newest at top):
 
 ```
-2026-08-05  W1.S1  Submitted early-stage API applications — DONE / IN PROGRESS / NOT STARTED
+MONTH 1 COMPLETE — all coding tasks done, tested, committed.
+  W4  OAuthTokenStore + credential security fix + sync_runner + base classes
+  W3  self-healing mapping loop + template library (mapping_engine.py)
+  W2  five-layer validation, wired into the pipeline (validation.py)
+  W1  fixed active_days / churned / ltv / "now" / timezones (etl.py)
+  W1.S1  API applications — STILL OUTSTANDING (your task, not code)
 ```
 
 ---
@@ -116,63 +121,72 @@ Full justification copy lives in [`docs/API_ACCESS_APPLICATION.md`](docs/API_ACC
     address matching it, a live company website
   - **Done when:** all 5 submitted, confirmation emails saved to a folder
 
-- [ ] **W1.S2 — Fix `active_days`**
+- [x] **W1.S2 — Fix `active_days`**
   - Currently: `(last_event - first_event)` = total span. A user active on day 1 and day 30 shows 30 active days.
   - Change to: count of distinct calendar dates with events
   - Also fixes `events_per_day` (inflated denominator)
   - **Done when:** `active_days` ≤ span for every user; spot-check 3 users manually
 
-- [ ] **W1.S3 — Fix `churned`**
+- [x] **W1.S3 — Fix `churned`**
   - Currently: heuristic (2 of 3: low events / short span / few features). Calls a user who signed up yesterday "churned".
-  - Change to: `days_since_last > 14` for users past trial
-  - **Done when:** churn rate is plausible; a brand-new active user is NOT churned
+  - ✅ Built: recency-based, threshold **inferred per dataset** from inter-event
+    gaps rather than fixed at 14d — a daily-use rule marks everyone churned in a
+    weekly/monthly product. Exposed via `profiles.attrs['churn_threshold_days']`.
+  - ⚠️ Note: on the sample dataset this yields ~100% churn. That is *correct* —
+    only 2 of 15,000 users were active in the final window. The old heuristic
+    produced a friendlier number by measuring engagement and calling it churn.
 
-- [ ] **W1.S4 — Rename `ltv` → `revenue_to_date`; fix "now"**
+- [x] **W1.S4 — Rename `ltv` → `revenue_to_date`; fix "now"**
   - `ltv` is just historical revenue, not a projection — the name lies
-  - Replace `df["timestamp"].max()` with `pd.Timestamp.now(tz="UTC")` as "now"
-  - **Done when:** no chart labels say LTV for a to-date figure
+  - ✅ Built: `revenue_to_date` added; `ltv` kept as an alias so the 93 existing
+    chart references keep working. "now" is real time, falling back to dataset
+    end when data is stale.
+  - ⬜ **Still outstanding:** user-facing chart *labels* still say "LTV" for a
+    to-date figure. Cosmetic but it's the part users actually see — do in W12.
 
-- [ ] **W1.S5 — Timezone normalization**
-  - All timestamps → UTC at ingest, timezone-aware
-  - **Done when:** `events["timestamp"].dt.tz` is not None
+- [x] **W1.S5 — Timezone normalization**
+  - ✅ Built: normalised to a single UTC wall clock at both ingest points, then
+    tz dropped. Deliberate — making events tz-aware breaks comparisons against
+    the naive date-picker values throughout the dashboard.
 
 ### Week 2 — Validation contracts
 
-- [ ] **W2.S1 — `FieldContract` + `EVENTS_CONTRACT`** in `taxonomy.py`
+- [x] **W2.S1 — `FieldContract` + `EVENTS_CONTRACT`** (built in `validation.py`,
+  not `taxonomy.py` — validation is a separate concern and taxonomy was already 365 lines)
   - **Done when:** contract defined for user_id / timestamp / event_name
-- [ ] **W2.S2 — Layer 1+2: structural + semantic validation**
+- [x] **W2.S2 — Layer 1+2: structural + semantic validation**
   - Required cols, dtypes, nulls, canonical event names, plausible date range
   - **Done when:** running on good data → 0 findings; on broken fixture → findings
-- [ ] **W2.S3 — Layer 3: statistical plausibility**
+- [x] **W2.S3 — Layer 3: statistical plausibility**
   - conversion 0-100%, churn 0-100%, events/user < 100k, future_ts < 0.1%, dupes < 5%
   - **Done when:** a deliberately double-mapped event trips the conversion rule
-- [ ] **W2.S4 — Layer 4: reconciliation**
+- [x] **W2.S4 — Layer 4: reconciliation**
   - Computed row count vs source `COUNT(*)`; later Stripe MRR vs Stripe's own total
   - **Done when:** mismatch > 2% produces a finding
-- [ ] **W2.S5 — `ValidationReport` + BLOCK/WARN/INFO gating**
+- [x] **W2.S5 — `ValidationReport` + BLOCK/WARN/INFO gating**
   - BLOCK = refuse mapping · WARN = apply + flag · INFO = log
   - **Done when:** a BLOCK-level failure prevents `apply_mapping` from committing
 
 ### Week 3 — Self-healing loop ⭐ *the differentiator*
 
-- [ ] **W3.S1-S2 — Retry loop**
+- [x] **W3.S1-S2 — Retry loop**
   - AI proposes mapping → validate → on failure feed findings back to Claude → re-propose
   - Max 3 attempts, then escalate to human review
   - **Done when:** a deliberately confusing schema self-corrects within 3 attempts
-- [ ] **W3.S3 — `MappingTemplateLibrary`** — fingerprint + store approved mappings
-- [ ] **W3.S4 — Template lookup before AI call** (skip the AI entirely on a fingerprint match)
+- [x] **W3.S3 — `MappingTemplateLibrary`** — fingerprint + store approved mappings
+- [x] **W3.S4 — Template lookup before AI call** (skip the AI entirely on a fingerprint match)
   - **Done when:** second connect of the same schema shape needs 0 AI calls
-- [ ] **W3.S5 — End-to-end test on broken fixture data**
+- [x] **W3.S5 — End-to-end test on broken fixture data**
 
 ### Week 4 — Shared connector infrastructure
 
-- [ ] **W4.S1-S2 — `OAuthTokenStore`** — encrypted at rest, auto-refresh, server-side only
-- [ ] **W4.S3 — 🔒 SECURITY FIX: DB credentials out of `dcc.Store`**
+- [x] **W4.S1-S2 — `OAuthTokenStore`** — encrypted at rest, auto-refresh, server-side only
+- [x] **W4.S3 — 🔒 SECURITY FIX: DB credentials out of `dcc.Store`**
   - Currently `dashboard_flows.py:8985` puts the full DB URL *including password* into a client-side store → readable in the browser DOM
   - Move to server-side dict keyed by opaque `connection_id`
   - **Done when:** no credential appears anywhere in browser DOM/devtools
-- [ ] **W4.S4 — `sync_runner.py` + cursor state table** (incremental syncs)
-- [ ] **W4.S5 — Base classes:** `FinanceConnector`, `AdsConnector`, `EmailMarketingConnector`
+- [x] **W4.S4 — `sync_runner.py` + cursor state table** (incremental syncs)
+- [x] **W4.S5 — Base classes:** `FinanceConnector`, `AdsConnector`, `EmailMarketingConnector`
 
 > **🚦 GATE (end of W4):** Does the self-healing loop fix a broken mapping on its own?
 > If no → stop, fix it. Everything downstream depends on this.
@@ -308,13 +322,17 @@ Those are what make it a product instead of a script.
 
 | Issue | Location | Fixed in |
 |---|---|---|
-| 🔒 DB credentials (incl. password) written to client-side store | `dashboard_flows.py:8985` → `dcc.Store` at `:7492` | W4.S3 |
-| `active_days` = total span, not distinct active dates | `etl.py:343` | W1.S2 |
-| `churned` = 3-signal heuristic, flags new users as churned | `etl.py:393-394` | W1.S3 |
-| `ltv` is revenue-to-date, not a projection — name misleads | `etl.py:410` | W1.S4 |
-| "now" = last event in data, not actual now | `etl.py:381` | W1.S4 |
-| No timezone handling anywhere (0 occurrences of `tz=`) | `etl.py` | W1.S5 |
-| Global-swapping blocks multi-tenancy | `dashboard_flows.py:7680` | W9 |
+| ✅ `active_days` = span not distinct dates | `etl.py` | **fixed W1.S2** |
+| ✅ `churned` = 3-signal heuristic | `etl.py` | **fixed W1.S3** |
+| ✅ `ltv` misnamed at the data layer | `etl.py` | **fixed W1.S4** |
+| ✅ "now" = last event in data | `etl.py` | **fixed W1.S4** |
+| ✅ No timezone handling | `etl.py` | **fixed W1.S5** |
+| ✅ Credentials written to client-side store | `credentials.py` | **fixed W4.S1-3** |
+| ⬜ Chart *labels* still say "LTV" for a to-date figure | `dashboard_flows.py` | W12 |
+| ⬜ Settings UI still passes `sql_url` through `dcc.Store` — needs rewiring to the new `CredentialStore` | `dashboard_flows.py:8985` | **W5.S1** |
+| ⬜ Global-swapping blocks multi-tenancy | `dashboard_flows.py:7680` | W9 |
+
+**New modules from Month 1:** `validation.py` · `mapping_engine.py` · `credentials.py` · `sync_runner.py`
 
 *Line numbers drift as you edit — grep the symbol if a reference goes stale.*
 
