@@ -62,6 +62,11 @@ total_users   = events_raw["user_id"].nunique()
 
 # ── Filter generic/noise events for all visualisations
 GENERIC_EVENTS = {"page_view", "click", "session_start", "session_end"}
+
+# Smallest acceptable size for the minority class before churn modelling is
+# meaningful. Below this, a classifier reports high accuracy while having
+# learned nothing, so the charts explain the gap instead of showing noise.
+MIN_COHORT_FOR_MODEL = 30
 events = events_raw[~events_raw["event_name"].isin(GENERIC_EVENTS)].copy()
 
 rete_df_filtered = (
@@ -624,13 +629,29 @@ def build_rete_sankey(max_steps=8, threshold=0.03, user_ids=None, eventstream=No
     return fig
 
 
-def _empty_fig(msg="No data"):
+def _empty_fig(msg="No data", wrap_at=44):
+    # Plotly annotations do not wrap, so a long explanatory message gets clipped
+    # at both edges — especially in half-width cards. Wrap it ourselves, and
+    # honour any <br> the caller already placed.
+    import textwrap
+    msg = "<br>".join(
+        "<br>".join(textwrap.wrap(line, wrap_at)) if line else ""
+        for line in msg.split("<br>")
+    )
+    # Axes hidden and the annotation anchored to the paper rather than to data
+    # coordinates, so it centres in an otherwise empty frame.
     return go.Figure().update_layout(
-        paper_bgcolor=BG_CARD, plot_bgcolor=BG_PAGE,
+        paper_bgcolor=BG_CARD, plot_bgcolor=BG_CARD,
         font=dict(color=TEXT_PRI),
-        annotations=[dict(text=msg, showarrow=False,
-                          font=dict(size=14, color=TEXT_SEC))],
-        height=300, margin=dict(l=0, r=0, t=0, b=0),
+        xaxis=dict(visible=False), yaxis=dict(visible=False),
+        annotations=[dict(
+            text=msg, showarrow=False,
+            xref="paper", yref="paper", x=0.5, y=0.5,
+            xanchor="center", yanchor="middle",
+            align="center",
+            font=dict(size=13, color=TEXT_SEC),
+        )],
+        height=300, margin=dict(l=40, r=40, t=20, b=20),
     )
 
 
@@ -3421,6 +3442,26 @@ def _build_churn_model():
 
     up = user_profiles.copy()
 
+    # ── Refuse to train on a degenerate target ───────────────────────────
+    # A classifier fitted on 14,998 positives and 2 negatives reports ~100%
+    # accuracy while having learned nothing (AUC ≈ 0.5, every prediction
+    # 1.000). Presenting that as a churn predictor is worse than showing
+    # nothing, so say why instead. This also covers the inverse case — a young
+    # product where almost nobody has churned yet.
+    _n_churn = int(up["churned"].sum())
+    _n_active = int((1 - up["churned"]).sum())
+    _minority = min(_n_churn, _n_active)
+    if _minority < MIN_COHORT_FOR_MODEL:
+        _msg = (
+            f"Not enough contrast to model churn: {_n_active:,} active vs "
+            f"{_n_churn:,} churned users.<br>"
+            f"At least {MIN_COHORT_FOR_MODEL} in the smaller group are needed "
+            f"for predictions to mean anything."
+        )
+        _empty = _empty_fig(_msg)
+        _blank = pd.Series(dtype=float)
+        return _empty, float("nan"), [], None, [], None, None
+
     # ── Engineer ratio-based features (more actionable than raw counts)
     te = up["total_events"].clip(lower=1)
     sc = up["session_count"].clip(lower=1)
@@ -3603,7 +3644,14 @@ def build_shap_feature_table(records):
 # ══════════════════════════════════════════════════════════════
 
 def _compute_churn_probabilities(clf, feat_cols):
-    """Score every user with churn probability using the trained RF model."""
+    """Score every user with churn probability using the trained RF model.
+
+    Returns an empty Series when no model was trained (see the degenerate-target
+    guard in _build_churn_model), so dependent charts show their empty state
+    rather than fabricating scores.
+    """
+    if clf is None or not feat_cols:
+        return pd.Series(dtype=float, name="churn_prob")
     up = user_profiles.copy()
     # Engineer same ratio features as in training
     te = up["total_events"].clip(lower=1)
@@ -3624,7 +3672,15 @@ def _compute_churn_probabilities(clf, feat_cols):
 
 def build_churn_prob_histogram(probs):
     """Histogram of churn probabilities for active users."""
+    if probs is None or probs.empty:
+        return _empty_fig(
+            "Churn scoring unavailable — not enough contrast between active "
+            "and churned users to train a model.")
     active_probs = probs[user_profiles["churned"] == 0]
+    if len(active_probs) < MIN_COHORT_FOR_MODEL:
+        return _empty_fig(
+            f"Only {len(active_probs):,} active user(s) to score — "
+            f"too few for a meaningful distribution.")
     fig = go.Figure(go.Histogram(
         x=active_probs * 100,
         nbinsx=20,
@@ -7212,9 +7268,14 @@ app.layout = dbc.Container([
             [dcc.Graph(id="churn-beh-fig", figure=_churn_beh_fig, config={"displayModeBar": False})]), md=12),
     ]),
     _section_header("ML Churn Prediction — SHAP Feature Importance",
-        f"RandomForest classifier (AUC = {_shap_auc:.3f}) trained on all user profile features. "
-        "SHAP values reveal which features most influence the model's churn prediction and in which "
-        "direction. Red bars push toward churn; green bars push toward retention."),
+        (f"RandomForest classifier (AUC = {_shap_auc:.3f}) trained on all user "
+         "profile features. SHAP values reveal which features most influence the "
+         "model's churn prediction and in which direction. Red bars push toward "
+         "churn; green bars push toward retention."
+         ) if _churn_clf is not None else
+        ("No churn model could be trained on this data — see the chart below for "
+         "details. A model needs a meaningful number of users on both sides of "
+         "the churn line to learn anything.")),
     dbc.Row([
         dbc.Col(_card("SHAP Feature Importance — What Drives Churn vs Retention",
             "Features ranked by mean |SHAP value| — the most predictive signals for churn. "

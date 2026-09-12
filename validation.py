@@ -309,6 +309,13 @@ PLAUSIBILITY_RULES: list[PlausibilityRule] = [
                      "more than 1% of events have no user"),
     PlausibilityRule("single_user_share_pct", lambda v: v < 50.0,
                      "one user accounts for over half of all events"),
+    # A cohort comparison needs both sides populated. With, say, 2 retained
+    # users out of 15,000, every "Active %" is 0, 50 or 100 — arithmetically
+    # correct and analytically worthless. Flag it so the numbers are read with
+    # the right scepticism rather than taken at face value.
+    PlausibilityRule("smaller_churn_cohort", lambda v: v >= 30,
+                     "too few users on one side of the churn line for cohort "
+                     "comparisons or churn modelling to be meaningful"),
 ]
 
 
@@ -338,6 +345,9 @@ def compute_metrics(events: pd.DataFrame,
             m["conversion_rate_pct"] = float(profiles["converted"].mean() * 100)
         if "churned" in profiles.columns:
             m["churn_rate_pct"] = float(profiles["churned"].mean() * 100)
+            n_churn = int(profiles["churned"].sum())
+            m["smaller_churn_cohort"] = float(
+                min(n_churn, len(profiles) - n_churn))
 
     return m
 
